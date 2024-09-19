@@ -101,3 +101,6 @@ ENV/
 .mypy_cache/
 
 .DS_Store
+
+#ignore a folder
+.insightface/recognition/arcface_torch/checkpoints/
