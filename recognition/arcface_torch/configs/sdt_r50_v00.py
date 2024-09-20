@@ -22,6 +22,6 @@ config.dali = False
 config.rec = "/kaggle/input/training-sdt-v-001/SDT_v_001"
 config.num_classes = 746
 config.num_image = 4421
-config.num_epoch = 50
+config.num_epoch = 20
 config.warmup_epoch = 0
 config.val_targets = ['lfw', 'cfp_fp', "agedb_30"]

@@ -129,42 +129,36 @@ def calculate_val(thresholds,
                   nrof_folds=10):
     assert (embeddings1.shape[0] == embeddings2.shape[0])
     assert (embeddings1.shape[1] == embeddings2.shape[1])
-def calculate_val(thresholds, embeddings1, embeddings2, actual_issame, far_target, nrof_folds=10):
     nrof_pairs = min(len(actual_issame), embeddings1.shape[0])
     nrof_thresholds = len(thresholds)
-    k_fold = KFold(n_splits=nrof_folds, shuffle=False)
+    k_fold = LFold(n_splits=nrof_folds, shuffle=False)
 
     val = np.zeros(nrof_folds)
     far = np.zeros(nrof_folds)
-    val_std = np.zeros(nrof_folds)
 
     diff = np.subtract(embeddings1, embeddings2)
     dist = np.sum(np.square(diff), 1)
-
     indices = np.arange(nrof_pairs)
 
     for fold_idx, (train_set, test_set) in enumerate(k_fold.split(indices)):
-        # Find the best threshold for the fold
+
+        # Find the threshold that gives FAR = far_target
         far_train = np.zeros(nrof_thresholds)
         for threshold_idx, threshold in enumerate(thresholds):
-            _, far_train[threshold_idx] = calculate_accuracy(threshold, dist[train_set], actual_issame[train_set])
+            _, far_train[threshold_idx] = calculate_val_far(
+                threshold, dist[train_set], actual_issame[train_set])
+        if np.max(far_train) >= far_target:
+            f = interpolate.interp1d(far_train, thresholds, kind='slinear')
+            threshold = f(far_target)
+        else:
+            threshold = 0.0
 
-        # Remove duplicates from far_train and corresponding thresholds
-        unique_far_train, unique_indices = np.unique(far_train, return_index=True)
-        unique_thresholds = thresholds[unique_indices]
-
-        if len(unique_far_train) < 2:
-            raise ValueError("Not enough unique FAR values to perform interpolation.")
-
-        f = interpolate.interp1d(unique_far_train, unique_thresholds, kind='slinear')
-        threshold = f(far_target)
-
-        val[fold_idx], far[fold_idx] = calculate_accuracy(threshold, dist[test_set], actual_issame[test_set])
+        val[fold_idx], far[fold_idx] = calculate_val_far(
+            threshold, dist[test_set], actual_issame[test_set])
 
     val_mean = np.mean(val)
-    val_std = np.std(val)
     far_mean = np.mean(far)
-
+    val_std = np.std(val)
     return val_mean, val_std, far_mean
 
 
@@ -202,6 +196,7 @@ def evaluate(embeddings, actual_issame, nrof_folds=10, pca=0):
                                       nrof_folds=nrof_folds)
     return tpr, fpr, accuracy, val, val_std, far
 
+
 @torch.no_grad()
 def load_bin(path, image_size):
     try:
@@ -212,7 +207,8 @@ def load_bin(path, image_size):
             bins, issame_list = pickle.load(f, encoding='bytes')  # py3
     data_list = []
     for flip in [0, 1]:
-        data = torch.empty((len(issame_list) * 2, 3, image_size[0], image_size[1]))
+        data = torch.empty(
+            (len(issame_list) * 2, 3, image_size[0], image_size[1]))
         data_list.append(data)
     for idx in range(len(issame_list) * 2):
         _bin = bins[idx]
@@ -228,6 +224,7 @@ def load_bin(path, image_size):
             print('loading bin', idx)
     print(data_list[0].shape)
     return data_list, issame_list
+
 
 @torch.no_grad()
 def test(data_set, backbone, batch_size, nfolds=10):
@@ -275,7 +272,8 @@ def test(data_set, backbone, batch_size, nfolds=10):
     embeddings = sklearn.preprocessing.normalize(embeddings)
     print(embeddings.shape)
     print('infer time', time_consumed)
-    _, _, accuracy, val, val_std, far = evaluate(embeddings, issame_list, nrof_folds=nfolds)
+    _, _, accuracy, val, val_std, far = evaluate(
+        embeddings, issame_list, nrof_folds=nfolds)
     acc2, std2 = np.mean(accuracy), np.std(accuracy)
     return acc1, std1, acc2, std2, _xnorm, embeddings_list
 
@@ -327,89 +325,89 @@ def dumpR(data_set,
                     protocol=pickle.HIGHEST_PROTOCOL)
 
 
-if __name__ == '__main__':
-
-    parser = argparse.ArgumentParser(description='do verification')
-    # general
-    parser.add_argument('--data-dir', default='', help='')
-    parser.add_argument('--model',
-                        default='../model/softmax,50',
-                        help='path to load model.')
-    parser.add_argument('--target',
-                        default='lfw,cfp_ff,cfp_fp,agedb_30',
-                        help='test targets.')
-    parser.add_argument('--gpu', default=0, type=int, help='gpu id')
-    parser.add_argument('--batch-size', default=32, type=int, help='')
-    parser.add_argument('--max', default='', type=str, help='')
-    parser.add_argument('--mode', default=0, type=int, help='')
-    parser.add_argument('--nfolds', default=10, type=int, help='')
-    args = parser.parse_args()
-    image_size = [112, 112]
-    print('image_size', image_size)
-    ctx = mx.gpu(args.gpu)
-    nets = []
-    vec = args.model.split(',')
-    prefix = args.model.split(',')[0]
-    epochs = []
-    if len(vec) == 1:
-        pdir = os.path.dirname(prefix)
-        for fname in os.listdir(pdir):
-            if not fname.endswith('.params'):
-                continue
-            _file = os.path.join(pdir, fname)
-            if _file.startswith(prefix):
-                epoch = int(fname.split('.')[0].split('-')[1])
-                epochs.append(epoch)
-        epochs = sorted(epochs, reverse=True)
-        if len(args.max) > 0:
-            _max = [int(x) for x in args.max.split(',')]
-            assert len(_max) == 2
-            if len(epochs) > _max[1]:
-                epochs = epochs[_max[0]:_max[1]]
-
-    else:
-        epochs = [int(x) for x in vec[1].split('|')]
-    print('model number', len(epochs))
-    time0 = datetime.datetime.now()
-    for epoch in epochs:
-        print('loading', prefix, epoch)
-        sym, arg_params, aux_params = mx.model.load_checkpoint(prefix, epoch)
-        # arg_params, aux_params = ch_dev(arg_params, aux_params, ctx)
-        all_layers = sym.get_internals()
-        sym = all_layers['fc1_output']
-        model = mx.mod.Module(symbol=sym, context=ctx, label_names=None)
-        # model.bind(data_shapes=[('data', (args.batch_size, 3, image_size[0], image_size[1]))], label_shapes=[('softmax_label', (args.batch_size,))])
-        model.bind(data_shapes=[('data', (args.batch_size, 3, image_size[0],
-                                          image_size[1]))])
-        model.set_params(arg_params, aux_params)
-        nets.append(model)
-    time_now = datetime.datetime.now()
-    diff = time_now - time0
-    print('model loading time', diff.total_seconds())
-
-    ver_list = []
-    ver_name_list = []
-    for name in args.target.split(','):
-        path = os.path.join(args.data_dir, name + ".bin")
-        if os.path.exists(path):
-            print('loading.. ', name)
-            data_set = load_bin(path, image_size)
-            ver_list.append(data_set)
-            ver_name_list.append(name)
-
-    if args.mode == 0:
-        for i in range(len(ver_list)):
-            results = []
-            for model in nets:
-                acc1, std1, acc2, std2, xnorm, embeddings_list = test(
-                    ver_list[i], model, args.batch_size, args.nfolds)
-                print('[%s]XNorm: %f' % (ver_name_list[i], xnorm))
-                print('[%s]Accuracy: %1.5f+-%1.5f' % (ver_name_list[i], acc1, std1))
-                print('[%s]Accuracy-Flip: %1.5f+-%1.5f' % (ver_name_list[i], acc2, std2))
-                results.append(acc2)
-            print('Max of [%s] is %1.5f' % (ver_name_list[i], np.max(results)))
-    elif args.mode == 1:
-        raise ValueError
-    else:
-        model = nets[0]
-        dumpR(ver_list[0], model, args.batch_size, args.target)
+# if __name__ == '__main__':
+#
+#     parser = argparse.ArgumentParser(description='do verification')
+#     # general
+#     parser.add_argument('--data-dir', default='', help='')
+#     parser.add_argument('--model',
+#                         default='../model/softmax,50',
+#                         help='path to load model.')
+#     parser.add_argument('--target',
+#                         default='lfw,cfp_ff,cfp_fp,agedb_30',
+#                         help='test targets.')
+#     parser.add_argument('--gpu', default=0, type=int, help='gpu id')
+#     parser.add_argument('--batch-size', default=32, type=int, help='')
+#     parser.add_argument('--max', default='', type=str, help='')
+#     parser.add_argument('--mode', default=0, type=int, help='')
+#     parser.add_argument('--nfolds', default=10, type=int, help='')
+#     args = parser.parse_args()
+#     image_size = [112, 112]
+#     print('image_size', image_size)
+#     ctx = mx.gpu(args.gpu)
+#     nets = []
+#     vec = args.model.split(',')
+#     prefix = args.model.split(',')[0]
+#     epochs = []
+#     if len(vec) == 1:
+#         pdir = os.path.dirname(prefix)
+#         for fname in os.listdir(pdir):
+#             if not fname.endswith('.params'):
+#                 continue
+#             _file = os.path.join(pdir, fname)
+#             if _file.startswith(prefix):
+#                 epoch = int(fname.split('.')[0].split('-')[1])
+#                 epochs.append(epoch)
+#         epochs = sorted(epochs, reverse=True)
+#         if len(args.max) > 0:
+#             _max = [int(x) for x in args.max.split(',')]
+#             assert len(_max) == 2
+#             if len(epochs) > _max[1]:
+#                 epochs = epochs[_max[0]:_max[1]]
+#
+#     else:
+#         epochs = [int(x) for x in vec[1].split('|')]
+#     print('model number', len(epochs))
+#     time0 = datetime.datetime.now()
+#     for epoch in epochs:
+#         print('loading', prefix, epoch)
+#         sym, arg_params, aux_params = mx.model.load_checkpoint(prefix, epoch)
+#         # arg_params, aux_params = ch_dev(arg_params, aux_params, ctx)
+#         all_layers = sym.get_internals()
+#         sym = all_layers['fc1_output']
+#         model = mx.mod.Module(symbol=sym, context=ctx, label_names=None)
+#         # model.bind(data_shapes=[('data', (args.batch_size, 3, image_size[0], image_size[1]))], label_shapes=[('softmax_label', (args.batch_size,))])
+#         model.bind(data_shapes=[('data', (args.batch_size, 3, image_size[0],
+#                                           image_size[1]))])
+#         model.set_params(arg_params, aux_params)
+#         nets.append(model)
+#     time_now = datetime.datetime.now()
+#     diff = time_now - time0
+#     print('model loading time', diff.total_seconds())
+#
+#     ver_list = []
+#     ver_name_list = []
+#     for name in args.target.split(','):
+#         path = os.path.join(args.data_dir, name + ".bin")
+#         if os.path.exists(path):
+#             print('loading.. ', name)
+#             data_set = load_bin(path, image_size)
+#             ver_list.append(data_set)
+#             ver_name_list.append(name)
+#
+#     if args.mode == 0:
+#         for i in range(len(ver_list)):
+#             results = []
+#             for model in nets:
+#                 acc1, std1, acc2, std2, xnorm, embeddings_list = test(
+#                     ver_list[i], model, args.batch_size, args.nfolds)
+#                 print('[%s]XNorm: %f' % (ver_name_list[i], xnorm))
+#                 print('[%s]Accuracy: %1.5f+-%1.5f' % (ver_name_list[i], acc1, std1))
+#                 print('[%s]Accuracy-Flip: %1.5f+-%1.5f' % (ver_name_list[i], acc2, std2))
+#                 results.append(acc2)
+#             print('Max of [%s] is %1.5f' % (ver_name_list[i], np.max(results)))
+#     elif args.mode == 1:
+#         raise ValueError
+#     else:
+#         model = nets[0]
+#         dumpR(ver_list[0], model, args.batch_size, args.target)
