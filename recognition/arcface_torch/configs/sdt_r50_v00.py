@@ -19,7 +19,7 @@ config.lr = 0.02
 config.verbose = 2000
 config.dali = False
 
-config.rec = "/kaggle/input/sdt-data-v001/Final_SDT_v_001"
+config.rec = "/kaggle/input/training-sdt-v-001/SDT_v_001"
 config.num_classes = 746
 config.num_image = 4421
 config.num_epoch = 50
