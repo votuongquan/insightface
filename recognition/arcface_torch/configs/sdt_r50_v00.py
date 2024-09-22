@@ -19,7 +19,7 @@ config.lr = 0.02
 config.verbose = 2000
 config.dali = False
 
-config.rec = "/kaggle/input/sdt-v-002-croppedface-training/SDT_v_002_croppedface_training"
+config.rec = "/kaggle/input/sdt-v-002-training/SDT_v_002_training"
 config.num_classes = 746
 config.num_image = 3730
 config.num_epoch = 20
